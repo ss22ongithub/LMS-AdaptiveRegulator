@@ -69,7 +69,7 @@ execute_config "Disable CPU core 5" "echo 0 >  /sys/devices/system/cpu/cpu5/onli
    #Remove any shields if it exists 
    sudo cset shield --reset 
 
-   sudo cset set -l
+   sudo cset set -l 
 
    sudo cset set -c $CPU_CORE_0 -s system
 
