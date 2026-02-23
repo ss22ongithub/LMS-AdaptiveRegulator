@@ -36,33 +36,40 @@
 static void deinitialize_cpu_info(const u8 cpu_id);
 static int  setup_cpu_info(const u8 cpu_id);
 static void ar_handle_read_overflow(struct irq_work *entry);
-#if 0
-static enum hrtimer_restart new_ar_regu_timer_callback(struct hrtimer *timer);
-#endif
+
 
 /**************************************************************************
- * External Function Declarations
- **************************************************************************/
+ * Module parameters
+**************************************************************************/
+
+static int g_read_counter_id = PMU_LLC_MISS_COUNTER_ID;
+module_param(g_read_counter_id, hexint,  S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+
+static int g_write_counter_id = PMU_LLC_WB_COUNTER_ID;
+module_param(g_write_counter_id, hexint,  S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+
+
+//Default global pool is zero .It will be filled with unused bandwidths.
+//Allow prefilling while loading module
+ulong g_pool_bw_mb = 0;
+module_param(g_pool_bw_mb, ulong, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 
 /**************************************************************************
  * Global Variables
  **************************************************************************/
 
-static int g_read_counter_id = PMU_LLC_MISS_COUNTER_ID;
-ulong g_total_available_bw_mb = 3000;
-
-module_param(g_read_counter_id, hexint,  S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-module_param(g_total_available_bw_mb, ulong, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-MODULE_PARM_DESC(g_total_available_bw_mb, "Total Memory BW Available in the system");
-
-u64 g_bw_intial_setpoint_mb[MAX_NO_CPUS+1] = {0,1000,1000,1000,1000}; /*Pre-defined initial / min Bandwidth in MB/s */
-u64 g_bw_max_mb[MAX_NO_CPUS+1] = {0,30000,30000,30000,30000}; /*Pre-defined max Bandwidth per core in MB/s */
+u64 g_initial_bw_mb[MAX_NO_CPUS+1] = {0,500,500,500,500}; /*Pre-defined initial / min Bandwidth in MB/s */
+const u64 g_percore_bw_limit_mb[MAX_NO_CPUS+1] = {0,1000,1000,1000,1000}; /*Pre-defined max Bandwidth per core in MB/s */
 
 /**************************************************************************
- * Public Types
- **** **********************************************************************/
+ * Static Types
+ ***************************************************************************/
 
 static struct core_info all_cinfo[MAX_NO_CPUS + 1];
+
+/**************************************************************************
+ * Utils
+ **************************************************************************/
 
 struct core_info* get_core_info(u8 cpu_id){
     switch(cpu_id){
@@ -79,9 +86,7 @@ struct core_info* get_core_info(u8 cpu_id){
 
 
 
-/**************************************************************************
- * Utils
- **************************************************************************/
+
 /* WARNING: This function should be kept strictly re-entrant */
 void __throttle( void* cpu )
 {
@@ -106,58 +111,14 @@ void __unthrottle( void* cpu) {
 }
 
 
-
-/**************************************************************************/
-#if 0
-static void __start_timer_on_cpu(void* cpu)
-{
-    u8 cpu_id = (u8)(uintptr_t)cpu;
-    struct core_info* cinfo = get_core_info(cpu_id);
-    BUG_ON(!cinfo);
-
-
-    /* start timer */
-        hrtimer_start(&cinfo->reg_timer, ms_to_ktime(get_regulation_time()),
-                      HRTIMER_MODE_REL_PINNED);
-
-}
-#endif
-
 /**************************************************************************
  * Callbacks and Handlers
  **************************************************************************/
-#if 0
-static enum hrtimer_restart new_ar_regu_timer_callback(struct hrtimer *timer)
-{
-    u8 cpu_id = smp_processor_id();
-//    AR_DEBUG("\n");
 
-    struct core_info *cinfo =  get_core_info(cpu_id);
-    BUG_ON(!cinfo);
 
-    /* 
-       Stop the counter and determine the used count in 
-       the previous regulation interval
-    */
-    cinfo->read_event->pmu->stop(cinfo->read_event, PERF_EF_UPDATE);
-
-    u64 read_event_new_budget = atomic64_read(&cinfo->budget_est);
-    local64_set(&cinfo->read_event->hw.period_left, read_event_new_budget);
-    AR_DEBUG("CPU(%u):New budget: %llu\n",cpu_id,read_event_new_budget);
-
-    //un-throttle if the core is in throttle state
-    atomic_set(&cinfo->throttler_task,false);
-
-    hrtimer_forward_now(timer, ms_to_ktime(get_regulation_time()));
-
-    /*Re-enabled the counter*/
-    cinfo->read_event->pmu->start(cinfo->read_event, PERF_EF_RELOAD);
-
-    /*Re-enabled the timer*/
-    return HRTIMER_RESTART;
-}
-#endif
-
+/**************************************************************************
+ * Throttle Thread
+ **************************************************************************/
 
 static int throttler_task_func1(void * data){
     u8 cpu_id = (unsigned long)data;
@@ -233,11 +194,20 @@ static void ar_handle_read_overflow(struct irq_work *entry)
 
     struct core_info *cinfo = get_core_info(cpu_id);
     BUG_ON(!cinfo);
+    u64 read_bw_used = cinfo->g_read_count_used;
+    u64 reclaim_budget = 0;
+    if (read_bw_used < g_pool_bw_mb )
+    {
+        reclaim_budget = read_bw_used/2;
+        g_pool_bw_mb -=  reclaim_budget;
+        local64_set(&cinfo->read_event->hw.period_left, reclaim_budget);
+        AR_DEBUG("read_bw_used(%llu) < g_pool_bw_mb(%lu): reclaim_budget(%llu)", read_bw_used, g_pool_bw_mb, reclaim_budget);
+        return;
+    }
 
     //Activate Throttling
     atomic_set(&cinfo->throttler_task,true);
     wake_up_interruptible(&cinfo->throttle_evt);
-
 }
 
 
@@ -254,19 +224,29 @@ static int  setup_cpu_info(const u8 cpu_id){
 
 
     cinfo->read_event =  init_counter(cinfo->cpu_id,
-                                     convert_mb_to_events(g_bw_intial_setpoint_mb[cpu_id]),
+                                     convert_mb_to_events(g_initial_bw_mb[cpu_id]),
                                      g_read_counter_id,
                                      read_event_overflow_callback);
     if (cinfo->read_event == NULL){
         pr_err("Read_event %p did not allocate ", cinfo->read_event);
         return -1;
     }
+    
+    cinfo->write_event = init_counter(cinfo->cpu_id,
+                                      convert_mb_to_events(g_initial_bw_mb[cpu_id]),
+                                      PMU_LLC_WB_COUNTER_ID,
+                                      NULL);  /* No callback for write - we don't throttle on write alone */
+    if (cinfo->write_event == NULL){
+        pr_err("Write_event %p did not allocate ", cinfo->write_event);
+        return -1;
+    }
+    
     cinfo->cycles_l3miss_event = init_counter(cinfo->cpu_id,6,
                                        PMU_STALL_L3_MISS_CYCLES_COUNTER_ID,
                                        NULL);
 
     if (cinfo->cycles_l3miss_event == NULL){
-        pr_err("Read_event %p did not allocate ", cinfo->cycles_l3miss_event);
+        pr_err("Cycles_l3miss_event %p did not allocate ", cinfo->cycles_l3miss_event);
         return -1;
     }
 
@@ -328,16 +308,31 @@ static void deinitialize_cpu_info( const u8 cpu_id){
     
     //End the throttle thread
     if(cinfo->throttler_thread){
+        atomic_set(&cinfo->throttler_task, false);  // Unthrottle first
+        wake_up_interruptible(&cinfo->throttle_evt); // Wake up
+        msleep(10);  // Give time to wake
+
         kthread_stop(cinfo->throttler_thread);
         atomic_set(&cinfo->throttler_task,false);
         cinfo->throttler_thread = NULL;
     }
     
-    //Free the perf event counter
+    //Free the perf event counters
     if (cinfo->read_event) {
         disable_event(cinfo->read_event);
-        cinfo->read_event= NULL;
+        cinfo->read_event = NULL;
     }
+    
+    if (cinfo->write_event) {
+        disable_event(cinfo->write_event);
+        cinfo->write_event = NULL;
+    }
+    
+    if (cinfo->cycles_l3miss_event) {
+        disable_event(cinfo->cycles_l3miss_event);
+        cinfo->cycles_l3miss_event = NULL;
+    }
+    
     pr_info("%s:Exit",__func__ );
 }
 
@@ -347,12 +342,13 @@ void start_regulation(u8 cpu_id){
     cinfo->next_estimate=0;
     cinfo->prev_estimate=0;
 
-    /* Enable perf event */
+    /* Enable perf events */
     enable_event(cinfo->read_event);
+    enable_event(cinfo->write_event);
     enable_event(cinfo->cycles_l3miss_event);
 
     /* Note: Timers are not used in this design.
-     * Master thread controls throttling/unthrottling */
+     * Master thread controls regulation timer */
 
     pr_info("%s: Exit: (CPU %u)",__func__,cpu_id );
 }
@@ -361,8 +357,9 @@ void stop_regulation(u8 cpu_id){
     struct core_info* cinfo = get_core_info(cpu_id);
     BUG_ON(cinfo==NULL);
 
-    /* Disable perf event */
+    /* Disable perf events */
     perf_event_disable(cinfo->read_event);
+    perf_event_disable(cinfo->write_event);
     perf_event_disable(cinfo->cycles_l3miss_event);
 
     /* Note: Timers are not used in this design */
@@ -468,6 +465,7 @@ static int __init ar_init (void ){
 
 static void __exit ar_exit( void )
 {
+    stop_all_regulation();
     /* Keep the deinitializing sequence reverse of the allocation sequence seen in  __init function */
     ar_remove_debugfs();
     

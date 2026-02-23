@@ -4,8 +4,6 @@
 #define HIST_SIZE 5
 #define MAX_NO_CPUS 4
 
-extern ulong g_total_available_bw_mb;
-
 /**************************************************************************
  * COUNTERS Format (Umask_code - EventCode) tools/perf/pmu-events/arch/x86/)
  **************************************************************************/
@@ -35,7 +33,10 @@ struct core_info {
   u64 g_read_count_new;
   u64 g_read_count_old;
   u64 g_read_count_used;
-    u64 read_limit;
+
+  u64 g_write_count_new;
+  u64 g_write_count_old;
+  u64 g_write_count_used;
 
   // History of count of LLC read misses occurred between the regulation intervals.
   // (Event: Read misses)
@@ -56,6 +57,7 @@ struct core_info {
   //  Bandwidth utilization parameters
   // PMC events
   struct perf_event *read_event;
+  struct perf_event *write_event;
   struct perf_event *cycles_l3miss_event;
 
   // Timer related

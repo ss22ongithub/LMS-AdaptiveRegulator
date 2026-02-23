@@ -20,8 +20,10 @@ extern void __throttle( void* cpu );
 extern void __unthrottle( void* cpu );
 
 /* External Variables / constants */
-extern u64 g_bw_intial_setpoint_mb[MAX_NO_CPUS+1];/*Pre-defined initial / min Bandwidth in MB/s */
-extern u64 g_bw_max_mb[MAX_NO_CPUS+1]; /*Pre-defined max Bandwidth per core in MB/s */
+extern u64 g_initial_bw_mb[MAX_NO_CPUS+1];/*Pre-defined initial / min Bandwidth in MB/s */
+extern const u64 g_percore_bw_limit_mb[MAX_NO_CPUS+1]; /*Pre-defined max Bandwidth per core in MB/s */
+extern ulong g_pool_bw_mb;
+
 
 static int master_thread_func(void * data) {
     pr_info("%s: Enter",__func__);
@@ -92,28 +94,41 @@ static int master_thread_func(void * data) {
                     struct core_info* cinfo = get_core_info(cpu_id);
                     WARN_ON(cinfo == NULL);
                     WARN_ON(cinfo->read_event == NULL);
+                    WARN_ON(cinfo->write_event == NULL);
 
                     struct perf_event* read_event = cinfo->read_event;
+                    struct perf_event* write_event = cinfo->write_event;
                     struct perf_event* cycles_l3miss_event = cinfo->cycles_l3miss_event;
 
-                    /* Stop the counter*/
-                    cinfo->read_event->pmu->stop(cinfo->read_event,PERF_EF_UPDATE);
+                    /* Stop the counters */
+                    cinfo->read_event->pmu->stop(cinfo->read_event, PERF_EF_UPDATE);
+                    cinfo->write_event->pmu->stop(cinfo->write_event, PERF_EF_UPDATE);
+                    cinfo->cycles_l3miss_event->pmu->stop(cinfo->cycles_l3miss_event,PERF_EF_UPDATE);
 
+                    /* Read bandwidth tracking */
                     cinfo->g_read_count_old = cinfo->g_read_count_new;
-                    cinfo->g_read_count_new = convert_events_to_mb( perf_event_count(read_event)) ;
-                    cinfo->g_read_count_used = cinfo->g_read_count_new -
-                                               cinfo->g_read_count_old;
+                    cinfo->g_read_count_new = convert_events_to_mb(perf_event_count(read_event));
+                    cinfo->g_read_count_used = cinfo->g_read_count_new - cinfo->g_read_count_old;
+
+                    /* Write bandwidth tracking */
+                    cinfo->g_write_count_old = cinfo->g_write_count_new;
+                    cinfo->g_write_count_new = convert_events_to_mb(perf_event_count(write_event));
+                    cinfo->g_write_count_used = cinfo->g_write_count_new - cinfo->g_write_count_old;
+
+                    /* Net bandwidth = read + write */
+                    u64 net_bandwidth_used = cinfo->g_read_count_used + cinfo->g_write_count_used;
 
                     u64 cycles_l3miss_count = perf_event_count(cycles_l3miss_event);
 
-                    bw_total_req += cinfo->g_read_count_used;
+                    bw_total_req += net_bandwidth_used;
 
+                    /* Use read bandwidth for ML prediction (history tracking) */
                     cinfo->read_event_hist[cinfo->ri] = cinfo->g_read_count_used;
                     cinfo->next_estimate = estimate( cinfo->read_event_hist,
                                                      sizeof(cinfo->read_event_hist)/sizeof(cinfo->read_event_hist[0]),
                                                      cinfo->weight_matrix,
                                                      sizeof(cinfo->weight_matrix)/sizeof(cinfo->weight_matrix[0]),
-                                                     cinfo->ri) + g_bw_intial_setpoint_mb[cpu_id];
+                                                     cinfo->ri) + g_initial_bw_mb[cpu_id];
 
                     if(cinfo->next_estimate < 0){
                         AR_DEBUG("CPU(%u): Negative Estimate=%lld \n",cpu_id,cinfo->next_estimate);
@@ -122,27 +137,24 @@ static int master_thread_func(void * data) {
                         continue;
                     }
 
-                    //TODO: When estimate crosses a thrhold
-                    // if (cinfo->next_estimate > g_bw_max_mb[cpu_id]){
-                    // 	AR_DEBUG("CPU(%u): Estimated(%u) = %lld > Max Limit \n",cpu_id, cinfo->next_estimate);
-                    // 	cinfo->next_estimate = g_bw_max_mb[cpu_id];
-                    // }
-                    u64 per_core_limit = 1000 ;
-                    u64 allocation = per_core_limit;
-                    if (cinfo->next_estimate < per_core_limit)
+                    u64 allocation = g_percore_bw_limit_mb[cpu_id];
+                    if (cinfo->next_estimate < g_percore_bw_limit_mb[cpu_id])
                     {
                         allocation = cinfo->next_estimate;
                     }
-                    g_total_available_bw_mb += max(0,per_core_limit - allocation);
+                    g_pool_bw_mb += max(0, g_percore_bw_limit_mb[cpu_id] - allocation);
 
-                    /* Allocate the budget */
+                    /* Allocate budget to both read and write counters */
                     local64_set(&cinfo->read_event->hw.period_left, convert_mb_to_events(allocation));
+                    local64_set(&cinfo->write_event->hw.period_left, convert_mb_to_events(allocation));
 
-                    //un-throttle if the core is in throttle state
-                    atomic_set(&cinfo->throttler_task,false);
+                    /* Unthrottle if the core is in throttle state */
+                    atomic_set(&cinfo->throttler_task, false);
 
-                    /*Re-enabled the counter*/
+                    /* Re-enable the counters */
                     cinfo->read_event->pmu->start(cinfo->read_event, PERF_EF_RELOAD);
+                    cinfo->write_event->pmu->start(cinfo->write_event, PERF_EF_RELOAD);
+                    cinfo->cycles_l3miss_event->pmu->start(cinfo->cycles_l3miss_event, PERF_EF_RELOAD);
 
                     s64 error = cinfo->g_read_count_used - cinfo->prev_estimate;
                     update_weight_matrix(error,cinfo);
@@ -158,15 +170,20 @@ static int master_thread_func(void * data) {
                     (cinfo->ri)++;
                     cinfo->ri = (cinfo->ri == HIST_SIZE)? 0:cinfo->ri;
 
-                    AR_DEBUG("CPU(%u):Used=%llu nxt_est=%lld err=%lld w0=%s w1=%s w2=%s w3=%s w4=%s treq=%lld alloc=%lld cycles_l3miss_count=%llu,G=%lu \n",
+                    AR_DEBUG("CPU(%u):r_bw_used=%llu nxt_est=%lld err=%lld w0=%s w1=%s w2=%s w3=%s w4=%s treq=%lld \
+                    alloc=%llu cycles_l3miss_count=%llu Gpool=%lu net_bw_used=%llu w_bw_used=%llu \n",
                                  cpu_id,
                                  cinfo->g_read_count_used,
                                  cinfo->next_estimate,
                                  error,
                                  buf[0],buf[1],buf[2],buf[3], buf[4],
-                                 bw_total_req,allocation,
+                                 bw_total_req, allocation,
                                  cycles_l3miss_count,
-                                 g_total_available_bw_mb);
+                                 g_pool_bw_mb,
+                                 net_bandwidth_used,
+                                 cinfo->g_write_count_used
+								 );
+
                     cinfo->prev_estimate=cinfo->next_estimate;
                     break;
                 default:
