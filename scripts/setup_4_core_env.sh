@@ -31,7 +31,15 @@ execute_config() {
    echo $end_msg
 }
 
- stop_all_unwanted_services(){
+init(){
+      # Ensure to run as root
+   if [ "$EUID" -ne 0 ]; then
+     echo "Please run as root or use sudo"
+     exit 1
+   fi
+}
+
+stop_all_unwanted_services(){
    execute_config "Truning off Snapd..." "systemctl disable --now snapd.service snapd.socket"
    execute_config "Turn Off rootkit deamon " "systemctl stop rtkit-daemon"
    execute_config "Turn Off CUPS"  "systemctl stop cups"
@@ -55,12 +63,13 @@ execute_config "Enable system wide and uncore event collection" "echo -1 >  /pro
 
 execute_config "Disable Real-time throttling " "echo -1 | sudo tee /proc/sys/kernel/sched_rt_runtime_us"
 
+# retain only 5 cores Core 0 , 1 , 2, 3, 4
 execute_config "Disable CPU core 5" "echo 0 >  /sys/devices/system/cpu/cpu5/online"
 
    #Remove any shields if it exists 
    sudo cset shield --reset 
 
-   sudo cset set -l 
+   sudo cset set -l
 
    sudo cset set -c $CPU_CORE_0 -s system
 
@@ -88,5 +97,5 @@ execute_config "Disable CPU core 5" "echo 0 >  /sys/devices/system/cpu/cpu5/onli
 
 }
 
-
+init
 main_setup 

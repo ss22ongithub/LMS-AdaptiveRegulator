@@ -191,12 +191,12 @@ function run_benchmark() {
 	export PERF_TIMEOUT=10000
 
 	local CPU_CORE=$CPU_CORE_FOREGROUND
-	if [[ $CPUSET_NAME == "back" ]] ; then
+	if [[ $CPUSET_NAME == $CPUSET_BACK_NAME ]] ; then
 		CPU_CORE=$CPU_CORE_BACKGROUND
 	fi
 
 
-	export ITERATIONS=30
+	export ITERATIONS=3
 	
 	export dt=`date +"%Y-%m-%d-%H-%M-%S"`
 	

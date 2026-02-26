@@ -2,13 +2,21 @@
 
 export MSR_WRITE_PERMISSION_PATH=/sys/module/msr/parameters/allow_writes
 export MSR_REG_HW_PREFETECHER=0x1A4
-export FOREGROUND_CPU_CORE=1
-export BACKGROUND_CPU_CORE=3
 export CPU_CORE_0=0
+export CPU_CORE_1=1
+export CPU_CORE_3=3
+
 
 
 #if SPEC Installation exist 
 export SPEC=$SPEC
+
+# Ensure to run as root
+if [ "$EUID" -ne 0 ]; then
+  echo "Please run as root or use sudo"
+  exit 1
+fi
+
 
 ##############################################################################################################
 execute_config() {
@@ -28,6 +36,18 @@ init(){
      exit 1
    fi
 }
+
+stop_all_unwanted_services(){
+   execute_config "Truning off Snapd..." "systemctl disable --now snapd.service snapd.socket"
+   execute_config "Turn Off rootkit deamon " "systemctl stop rtkit-daemon"
+   execute_config "Turn Off CUPS"  "systemctl stop cups"
+
+
+}
+
+
+##############################################################################################################
+
 main_setup(){
 
 #Turn on the permission for writing into msr registers.
@@ -46,27 +66,28 @@ execute_config "Disable CPU core 2" "echo 0 >  /sys/devices/system/cpu/cpu2/onli
 execute_config "Disable CPU core 4" "echo 0 >  /sys/devices/system/cpu/cpu4/online"
 execute_config "Disable CPU core 5" "echo 0 >  /sys/devices/system/cpu/cpu5/online"
 
-#cset set -l | egrep 'user|system'
-#ret=$?
-#echo $ret
-
-#if [[ $ret -ne 0 ]]; then 
    #Remove any shields if it exists 
    sudo cset shield --reset 
 
-   sudo cset set -l 
+   sudo cset set -l
 
-   sudo cset set -c  $CPU_CORE_0 -s system
+   sudo cset set -c $CPU_CORE_0 -s system
 
-   sudo cset set -c $FOREGROUND_CPU_CORE -s fore
-   sudo cset set -c $BACKGROUND_CPU_CORE -s back
-   echo "Creating Shield:moving all possible tasks to 'System' CPUSET"
+   sudo cset set -c $CPU_CORE_1 -s C1
+   sudo cset set -c $CPU_CORE_3 -s C3
+
+   cset set -l 
+   echo "Moving all possible tasks to 'System' CPUSET"
 
    sudo cset proc -m -k --force  -f root -t system
+   sudo cset proc -m -k --force  -f C1 -t system
+   sudo cset proc -m -k --force  -f C3 -t system
+
    sudo cset set -l 
 
    sleep 1
-#fi
+
+   stop_all_unwanted_services
 
 
 }
