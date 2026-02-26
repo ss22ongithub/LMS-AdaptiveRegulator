@@ -98,12 +98,12 @@ static int master_thread_func(void * data) {
 
                     struct perf_event* read_event = cinfo->read_event;
                     struct perf_event* write_event = cinfo->write_event;
-                    struct perf_event* cycles_l3miss_event = cinfo->cycles_l3miss_event;
+                    //struct perf_event* cycles_l3miss_event = cinfo->cycles_l3miss_event;
 
                     /* Stop the counters */
                     cinfo->read_event->pmu->stop(cinfo->read_event, PERF_EF_UPDATE);
                     cinfo->write_event->pmu->stop(cinfo->write_event, PERF_EF_UPDATE);
-                    cinfo->cycles_l3miss_event->pmu->stop(cinfo->cycles_l3miss_event,PERF_EF_UPDATE);
+                    //cinfo->cycles_l3miss_event->pmu->stop(cinfo->cycles_l3miss_event,PERF_EF_UPDATE);
 
                     /* Read bandwidth tracking */
                     cinfo->g_read_count_old = cinfo->g_read_count_new;
@@ -118,7 +118,7 @@ static int master_thread_func(void * data) {
                     /* Net bandwidth = read + write */
                     u64 net_bandwidth_used = cinfo->g_read_count_used + cinfo->g_write_count_used;
 
-                    u64 cycles_l3miss_count = perf_event_count(cycles_l3miss_event);
+                    //u64 cycles_l3miss_count = perf_event_count(cycles_l3miss_event);
 
                     bw_total_req += net_bandwidth_used;
 
@@ -154,7 +154,7 @@ static int master_thread_func(void * data) {
                     /* Re-enable the counters */
                     cinfo->read_event->pmu->start(cinfo->read_event, PERF_EF_RELOAD);
                     cinfo->write_event->pmu->start(cinfo->write_event, PERF_EF_RELOAD);
-                    cinfo->cycles_l3miss_event->pmu->start(cinfo->cycles_l3miss_event, PERF_EF_RELOAD);
+                    //cinfo->cycles_l3miss_event->pmu->start(cinfo->cycles_l3miss_event, PERF_EF_RELOAD);
 
                     s64 error = cinfo->g_read_count_used - cinfo->prev_estimate;
                     update_weight_matrix(error,cinfo);
@@ -171,14 +171,13 @@ static int master_thread_func(void * data) {
                     cinfo->ri = (cinfo->ri == HIST_SIZE)? 0:cinfo->ri;
 
                     AR_DEBUG("CPU(%u):r_bw_used=%llu nxt_est=%lld err=%lld w0=%s w1=%s w2=%s w3=%s w4=%s treq=%lld \
-                    alloc=%llu cycles_l3miss_count=%llu Gpool=%lu net_bw_used=%llu w_bw_used=%llu \n",
+                    alloc=%llu Gpool=%lu net_bw_used=%llu w_bw_used=%llu \n",
                                  cpu_id,
                                  cinfo->g_read_count_used,
                                  cinfo->next_estimate,
                                  error,
                                  buf[0],buf[1],buf[2],buf[3], buf[4],
                                  bw_total_req, allocation,
-                                 cycles_l3miss_count,
                                  g_pool_bw_mb,
                                  net_bandwidth_used,
                                  cinfo->g_write_count_used

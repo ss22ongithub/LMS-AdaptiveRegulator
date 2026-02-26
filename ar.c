@@ -208,6 +208,7 @@ static void ar_handle_read_overflow(struct irq_work *entry)
     //Activate Throttling
     atomic_set(&cinfo->throttler_task,true);
     wake_up_interruptible(&cinfo->throttle_evt);
+
 }
 
 
@@ -241,6 +242,7 @@ static int  setup_cpu_info(const u8 cpu_id){
         return -1;
     }
     
+    /* cycles_l3miss_event disabled
     cinfo->cycles_l3miss_event = init_counter(cinfo->cpu_id,6,
                                        PMU_STALL_L3_MISS_CYCLES_COUNTER_ID,
                                        NULL);
@@ -249,6 +251,7 @@ static int  setup_cpu_info(const u8 cpu_id){
         pr_err("Cycles_l3miss_event %p did not allocate ", cinfo->cycles_l3miss_event);
         return -1;
     }
+    */
 
     /* Initialize NMI irq_work_queue */
     init_irq_work(&cinfo->read_irq_work, ar_handle_read_overflow);
@@ -328,10 +331,12 @@ static void deinitialize_cpu_info( const u8 cpu_id){
         cinfo->write_event = NULL;
     }
     
+    /* cycles_l3miss_event disabled
     if (cinfo->cycles_l3miss_event) {
         disable_event(cinfo->cycles_l3miss_event);
         cinfo->cycles_l3miss_event = NULL;
     }
+    */
     
     pr_info("%s:Exit",__func__ );
 }
@@ -345,7 +350,7 @@ void start_regulation(u8 cpu_id){
     /* Enable perf events */
     enable_event(cinfo->read_event);
     enable_event(cinfo->write_event);
-    enable_event(cinfo->cycles_l3miss_event);
+    //enable_event(cinfo->cycles_l3miss_event);
 
     /* Note: Timers are not used in this design.
      * Master thread controls regulation timer */
@@ -360,7 +365,7 @@ void stop_regulation(u8 cpu_id){
     /* Disable perf events */
     perf_event_disable(cinfo->read_event);
     perf_event_disable(cinfo->write_event);
-    perf_event_disable(cinfo->cycles_l3miss_event);
+    //perf_event_disable(cinfo->cycles_l3miss_event);
 
     /* Note: Timers are not used in this design */
     pr_info("%s: Exit: (CPU %u)",__func__,cpu_id );
@@ -465,10 +470,8 @@ static int __init ar_init (void ){
 
 static void __exit ar_exit( void )
 {
-    stop_all_regulation();
     /* Keep the deinitializing sequence reverse of the allocation sequence seen in  __init function */
     ar_remove_debugfs();
-    
     deinitialize_master();
     
     deinitialize_cpu_info((u8)1);
