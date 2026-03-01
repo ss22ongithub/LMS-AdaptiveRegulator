@@ -71,8 +71,7 @@ static u64 l2_norm(u64* feature, u8 feat_len){
 }
 
 void 
-update_weight_matrix(s64 error,struct core_info* cinfo ){
-    
+update_weight_matrix(s64 error, struct core_info* cinfo){
     
     // Avoid Divide by zero error
     u64 norm_sq = l2_norm(cinfo->read_event_hist, HIST_SIZE);
@@ -86,7 +85,6 @@ update_weight_matrix(s64 error,struct core_info* cinfo ){
     error = error * sign_bit;
     // After this point error is always +ve
 
-
     double  product[HIST_SIZE] = {0};
 
     kernel_fpu_begin();
@@ -98,40 +96,48 @@ update_weight_matrix(s64 error,struct core_info* cinfo ){
         cinfo->weight_matrix[i] = cinfo->weight_matrix[i] + (sign_bit * product[i]);
     }
     kernel_fpu_end();
+}
+
+void 
+update_write_weight_matrix(s64 error, struct core_info* cinfo){
     
+    // Avoid Divide by zero error
+    u64 norm_sq = l2_norm(cinfo->write_event_hist, HIST_SIZE);
+    if ( 0 == norm_sq){
+        // AR_DEBUG("CPU(%d): Write Norm Square=0, skipping weight update\n", cinfo->cpu_id);
+        return;
+    }
 
-    // char buf[HIST_SIZE][51]={0};    
-    // for (u8 i = 0; i < HIST_SIZE; i++){
-    //     print_double(buf[i],cinfo->weight_matrix[i]);
-        
-    // }
+    // sign_bit: 1 = +ve , -1 = -ve. Convert error to a +ve value
+    const s8 sign_bit = (error < 0)?-1:1;
+    error = error * sign_bit;
+    // After this point error is always +ve
 
-    // AR_DEBUG("\n CPU(%u) | Weights ( %s %s %s %s %s) \n",
-    //              cinfo->cpu_id,
-    //              buf[0],buf[1],buf[2],buf[3], buf[4]);
+    double  product[HIST_SIZE] = {0};
 
-#if 0
-    // AR_DEBUG("\n CPU(%u)| read_event_hist( %llu, %llu, %llu, %llu, %llu)|ri=%u |\n error=%lld | norm_sq=%llu\n",
-    //     cinfo->cpu_id,
-    //     cinfo->read_event_hist[0],cinfo->read_event_hist[1],cinfo->read_event_hist[2],
-    //     cinfo->read_event_hist[3],cinfo->read_event_hist[4],
-    //     cinfo->ri,
-    //     error, norm_sq);
-    
-    // AR_DEBUG("\n CPU(%u) | Product term ( %s %s %s %s %s) \n",
-    //              cinfo->cpu_id,
-    //              buf2[0],buf2[1],buf2[2],buf2[3], buf2[4]);
-	//
-#endif
-
+    kernel_fpu_begin();
+    for (u8 i = 0; i <HIST_SIZE ; ++i) {
+        u64 t1 = mul_u64_u64_shr(error,cinfo->write_event_hist[i],0);
+        double  t2 = t1 / norm_sq;
+        product[i] = t2 * LRATE;
+        // Sign bit is used while updating the weight vector
+        cinfo->write_weight_matrix[i] = cinfo->write_weight_matrix[i] + (sign_bit * product[i]);
+    }
+    kernel_fpu_end();
 }
 
 void initialize_weight_matrix(struct core_info *cinfo, bool first){
-
     kernel_fpu_begin();
   	for(u8 i =0 ; i < HIST_SIZE; i++){
        	cinfo->weight_matrix[i] = (first)? INITIAL_WEIGHT : (cinfo->weight_matrix[i])/2;
   	}
     kernel_fpu_end();
+}
 
+void initialize_write_weight_matrix(struct core_info *cinfo, bool first){
+    kernel_fpu_begin();
+  	for(u8 i =0 ; i < HIST_SIZE; i++){
+       	cinfo->write_weight_matrix[i] = (first)? INITIAL_WEIGHT : (cinfo->write_weight_matrix[i])/2;
+  	}
+    kernel_fpu_end();
 }

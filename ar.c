@@ -72,15 +72,9 @@ static struct core_info all_cinfo[MAX_NO_CPUS + 1];
  **************************************************************************/
 
 struct core_info* get_core_info(u8 cpu_id){
-    /* CPU 0 is reserved for master thread, not regulated */
-    if (cpu_id == 0) {
-        pr_err("Invalid CPU ID %u (CPU 0 is master, not regulated)!!!", cpu_id);
-        return NULL;
-    }
-    
-    /* Check if CPU ID is within valid range */
-    if (cpu_id >= MAX_NO_CPUS) {
-        pr_err("Invalid CPU ID %u (max supported: %d)!!!", cpu_id, MAX_NO_CPUS - 1);
+    /* CPU 0 is reserved for master thread, CPUs beyond MAX_NO_CPUS not supported */
+    if (cpu_id == 0 || cpu_id > MAX_NO_CPUS) {
+        pr_err("Invalid CPU ID %u (CPU 0 is master, max supported: %d)!!!", cpu_id, MAX_NO_CPUS);
         return NULL;
     }
     
@@ -226,6 +220,11 @@ static int  setup_cpu_info(const u8 cpu_id){
     memset(cinfo, sizeof(struct core_info), 0);
     cinfo->cpu_id = cpu_id;
 
+    /* Initialize per-core bandwidth limits from global arrays */
+    cinfo->initial_bw_mb = g_initial_bw_mb[cpu_id];
+    cinfo->max_bw_limit_mb = g_percore_bw_limit_mb[cpu_id];
+    pr_info("CPU %d: initial_bw=%llu MB/s, max_bw=%llu MB/s\n", 
+            cpu_id, cinfo->initial_bw_mb, cinfo->max_bw_limit_mb);
 
     cinfo->read_event =  init_counter(cinfo->cpu_id,
                                      convert_mb_to_events(g_initial_bw_mb[cpu_id]),
@@ -293,8 +292,9 @@ static int  setup_cpu_info(const u8 cpu_id){
     /***** Regulation to be started by setting
     /sys/kernel/debug/ar/enable_regulation to 1 ****/
 
-    /* Initiialize weight matrix to predefined values */
-    initialize_weight_matrix(cinfo, true);
+    /* Initialize weight matrices for both read and write bandwidth estimation */
+    initialize_weight_matrix(cinfo, true);        // Read BW weights
+    initialize_write_weight_matrix(cinfo, true);  // Write BW weights
 
     pr_info("%s: Exit", __func__ );
     return 0;
@@ -344,7 +344,41 @@ static void deinitialize_cpu_info( const u8 cpu_id){
     pr_info("%s:Exit",__func__ );
 }
 
+void start_regulation(u8 cpu_id){
+    struct core_info* cinfo = get_core_info(cpu_id);
+    BUG_ON(cinfo==NULL);
+    
+    /* Initialize read estimates */
+    cinfo->next_estimate = 0;
+    cinfo->prev_estimate = 0;
+    
+    /* Initialize write estimates */
+    cinfo->write_next_estimate = 0;
+    cinfo->write_prev_estimate = 0;
 
+    /* Enable perf events */
+    enable_event(cinfo->read_event);
+    enable_event(cinfo->write_event);
+    //enable_event(cinfo->cycles_l3miss_event);
+
+    /* Note: Timers are not used in this design.
+     * Master thread controls regulation timer */
+
+    pr_info("%s: Exit: (CPU %u)",__func__,cpu_id );
+}
+
+void stop_regulation(u8 cpu_id){
+    struct core_info* cinfo = get_core_info(cpu_id);
+    BUG_ON(cinfo==NULL);
+
+    /* Disable perf events */
+    perf_event_disable(cinfo->read_event);
+    perf_event_disable(cinfo->write_event);
+    //perf_event_disable(cinfo->cycles_l3miss_event);
+
+    /* Note: Timers are not used in this design */
+    pr_info("%s: Exit: (CPU %u)",__func__,cpu_id );
+}
 
 /* New wrapper function that coordinates regulation start */
 void start_all_regulation(void){
@@ -352,6 +386,11 @@ void start_all_regulation(void){
     
     /* Signal master thread to unthrottle cores and begin regulation */
     master_start_regulation();
+    
+    /* Enable perf counters for all cores */
+    for (u8 cpu_id = 1; cpu_id <= 4; cpu_id++) {
+        start_regulation(cpu_id);
+    }
     
     pr_info("%s: All cores regulation started", __func__);
 }
@@ -362,6 +401,10 @@ void stop_all_regulation(void){
     /* Stop master thread regulation */
     master_stop_regulation();
     
+    /* Disable perf counters for all cores */
+    for (u8 cpu_id = 1; cpu_id <= 4; cpu_id++) {
+        stop_regulation(cpu_id);
+    }
     
     pr_info("%s: All cores regulation stopped", __func__);
 }
@@ -387,42 +430,40 @@ static int __init ar_init (void ){
     //Initialise core infos
     memset(all_cinfo, 0, sizeof(all_cinfo));
 
-    //Setup CPU info for all online CPUs (except CPU 0 - master)
-    u8 cpu_id;
-    u8 initialized_cpus[MAX_NO_CPUS] = {0};  // Track which CPUs were initialized
-    u8 init_count = 0;
-    int ret = 0;
-    
-    for_each_online_cpu(cpu_id) {
-        if (cpu_id == 0)
-            continue;  // Skip master CPU
-        
-        if (cpu_id >= MAX_NO_CPUS) {
-            pr_warn("CPU %d exceeds MAX_NO_CPUS (%d), skipping\n", cpu_id, MAX_NO_CPUS);
-            continue;
-        }
-        
-        ret = setup_cpu_info(cpu_id);
-        if (ret != 0) {
-            pr_err("setup_cpu_info() failed for CPU %d\n", cpu_id);
-            
-            // Cleanup: deinitialize all previously initialized CPUs
-            for (u8 i = 0; i < init_count; i++) {
-                deinitialize_cpu_info(initialized_cpus[i]);
-            }
-            return -ENOMEM;
-        }
-        
-        initialized_cpus[init_count++] = cpu_id;
-        pr_info("CPU %d initialized successfully\n", cpu_id);
+    //Setup CPU info for CPU 1,2, 3, 4
+    int ret = setup_cpu_info((u8)1);
+    if (ret != 0){
+        pr_err("setup_cpu() Failed");
+        deinitialize_cpu_info(1);
+        return -ENOMEM;
     }
-    
-    if (init_count == 0) {
-        pr_err("No CPUs available for regulation (need at least 1 CPU besides CPU 0)\n");
-        return -ENODEV;
+
+    ret = setup_cpu_info((u8)2);
+    if (ret != 0){
+        pr_err("setup_cpu() Failed");
+        deinitialize_cpu_info((u8)2);
+        deinitialize_cpu_info((u8)1);
+        return -ENOMEM;
     }
-    
-    pr_info("Initialized %d CPU(s) for regulation\n", init_count);
+
+    ret = setup_cpu_info((u8)3);
+    if (ret != 0){
+        pr_err("setup_cpu() Failed");
+        deinitialize_cpu_info((u8)3);
+        deinitialize_cpu_info((u8)2);
+        deinitialize_cpu_info((u8)1);
+        return -ENOMEM;
+    }
+
+    ret = setup_cpu_info((u8)4);
+    if (ret != 0){
+        pr_err("setup_cpu() Failed");
+        deinitialize_cpu_info((u8)4);
+        deinitialize_cpu_info((u8)3);
+        deinitialize_cpu_info((u8)2);
+        deinitialize_cpu_info((u8)1);
+        return -ENOMEM;
+    }
 
     /* Initialize the master thread - this will throttle all cores */
     initialize_master();
@@ -438,23 +479,17 @@ static int __init ar_init (void ){
 
 static void __exit ar_exit( void )
 {
-    u8 cpu_id;
-    
     /* Keep the deinitializing sequence reverse of the allocation sequence seen in  __init function */
     ar_remove_debugfs();
     deinitialize_master();
     
-    /* Deinitialize all regulated CPUs (except CPU 0 - master) */
-    for_each_online_cpu(cpu_id) {
-        if (cpu_id == 0)
-            continue;  // Skip master CPU
-        
-        if (cpu_id >= MAX_NO_CPUS)
-            continue;  // Skip invalid CPU IDs
-        
-        deinitialize_cpu_info(cpu_id);
-        pr_info("CPU %d deinitialized\n", cpu_id);
-    }
+    deinitialize_cpu_info((u8)1);
+    
+    deinitialize_cpu_info((u8)2);
+    
+    deinitialize_cpu_info((u8)3);
+    
+    deinitialize_cpu_info((u8)4);
 
     pr_info("Module removed\n");
 	return;

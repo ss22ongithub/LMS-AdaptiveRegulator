@@ -44,7 +44,12 @@ struct core_info {
   // History of count of LLC read misses occurred between the regulation intervals.
   // (Event: Read misses)
   u64 read_event_hist[HIST_SIZE];
-  u8 ri;
+  
+  // History of count of LLC write-backs occurred between the regulation intervals.
+  // (Event: Write-backs)
+  u64 write_event_hist[HIST_SIZE];
+  
+  u8 ri;  // Ring buffer index (shared for both read and write history)
 
   u8 cpu_id;
   wait_queue_head_t throttle_evt;
@@ -71,11 +76,22 @@ struct core_info {
   // Computed by master core
   atomic64_t budget_est;
   /* Each core has an array of weights to generate the prediction */
-
-  double weight_matrix [HIST_SIZE];
   
-  s64 next_estimate;
-  s64 prev_estimate;
+  /* Weight matrices for bandwidth prediction */
+  double weight_matrix[HIST_SIZE];         // Weights for read BW estimation (keep original name)
+  double write_weight_matrix[HIST_SIZE];   // Weights for write BW estimation
+  
+  // Read bandwidth estimates (keep original names)
+  s64 next_estimate;      // Next read bandwidth estimate
+  s64 prev_estimate;      // Previous read bandwidth estimate
+  
+  // Write bandwidth estimates (NEW)
+  s64 write_next_estimate;
+  s64 write_prev_estimate;
+  
+  // Per-core bandwidth limits (for dynamic configuration)
+  u64 initial_bw_mb;      // Initial/minimum bandwidth in MB/s
+  u64 max_bw_limit_mb;    // Maximum bandwidth limit in MB/s
   
 };
 
