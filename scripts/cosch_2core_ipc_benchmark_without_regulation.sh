@@ -6,8 +6,8 @@ export SPEC=$SPEC
 export CPU_CORE_FOREGROUND=1
 export CPU_CORE_BACKGROUND=3
 
-export CPUSET_BACK_NAME="back"
-export CPUSET_FORE_NAME="fore"
+export CPUSET_BACK_NAME="C3"
+export CPUSET_FORE_NAME="C1"
 
 export BASE_DATA_PATH=/home/ss22/Workspace/data/
 export MEMG_PATH=without_memguard/
@@ -297,7 +297,7 @@ BACKGROUND_TASK="519.lbm_r"
 # Run initializations 
 init 
 
-for benchmark in "${benchmarks_intrate[@]}";
+for benchmark in "${benchmarks_all[@]}";
 do
 	echo "====================================================$benchmark START============================================"
  	FOREGROUND_TASK=$benchmark
