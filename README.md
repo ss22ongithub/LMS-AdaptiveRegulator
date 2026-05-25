@@ -5,9 +5,9 @@ based Adaptive Regulator within a Linux kernel module to distribute the memory b
 adaptive filtering technique was employed for prediction of percore bandwidth requirement. We conducted several experiments with SPEC CPU 2017 benchmarks distributed across multiple cores. Our proposed approach demonstrated significant improvement over Memguard with respect to slowdown ratios caused due to memory contention.
 
 ## Usage instructions 
-* Clone the cource code
  ```
-  $ cd LMS-AdaptiveRegulator
+  $ git clone https://github.com/ss22ongithub/LMS-AdaptiveRegulator.git
+  $ cd LMS-AdaptiveRegulator 
   $ make
   $ insmod areg.ko
   $ echo 1 >  /sys/kernel/debug/ar/enable_regulation
