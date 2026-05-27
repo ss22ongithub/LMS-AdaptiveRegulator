@@ -1,9 +1,8 @@
 #!/bin/bash
 
-export BENCH='/home/ss22/Workspace/SRC/bench'
+export BENCH='/home/ss22/Workspace/SRC/bench/bench'
 set -e  # Exit on any error
 string=`cat /proc/cmdline | grep "i915.disable_display=0"`
-echo "debug"
 if [[ -z "$string"	 ]]; then
     echo "Please disable the display before running this script."
     exit 1
@@ -22,8 +21,12 @@ echo "Configuring hugepages..."
 sudo sysctl -w vm.nr_hugepages=64
 echo "✓ Hugepages configured ($(cat /proc/sys/vm/nr_hugepages))"	
 
+# Disable real-time throttling
+echo -1 | sudo tee /proc/sys/kernel/sched_rt_runtime_us
+echo "✓ Disabling real-time throttling ($(cat /proc/sys/kernel/sched_rt_runtime_us))"	
+
 # Run benchmark
-echo "Running benchmark..."
+echo "Running $BENCH for sustainable BW"
 [ ! -f "$BENCH" ] && echo "ERROR: $BENCH not found" && exit 1
 
 $BENCH --delay 10000 --size 32 --huge --perf --cpu 0 --auto --all --csv sustain_bw.csv

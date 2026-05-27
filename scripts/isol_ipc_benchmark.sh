@@ -1,7 +1,7 @@
-#! /bin/bash 
+#! /bin/bash
 
 
-#if SPEC Installation exist 
+#if SPEC Installation exist
 export SPEC=$SPEC
 export CPU_CORE_FOREGROUND=1
 
@@ -9,7 +9,7 @@ export BASE_DATA_PATH=/home/ss22/Workspace/data/
 export MEMG_PATH=without_regulation/
 
 export benchmarks_single=(
-"500.perlbench_r"
+"600.perlbench_s"
 )
 
 export benchmarks_all=(
@@ -90,7 +90,7 @@ export benchmarks_intspeed=(
 
 export benchmarks_fprate=(
 "503.bwaves_r"
-"507.cactuBSSN_r"	
+"507.cactuBSSN_r"
 "508.namd_r"
 "510.parest_r"
 "511.povray_r"
@@ -106,7 +106,7 @@ export benchmarks_fprate=(
 
 export benchmarks_fpspeed=(
 "603.bwaves_s"
-"607.cactuBSSN_s"	
+"607.cactuBSSN_s"
 "619.lbm_s"
 "621.wrf_s"
 "627.cam4_s"
@@ -140,8 +140,8 @@ function cleanup() {
     start_msg=$1
     cmd=$2
     end_msg="DONE"
-   
-    echo "$start_msg..."   
+
+    echo "$start_msg..."
     echo "sudo $cmd" | bash
     echo $end_msg
  }
@@ -161,9 +161,9 @@ function cleanup() {
 ##################################################################################################
 
 # function xxxxxxx() {
-	
+
 # 	export bm=$1
-	
+
 # 	dry_run=""
 # 	if [ -n "$2" ]; then
 #    	dry_run="--fakereport"
@@ -172,13 +172,13 @@ function cleanup() {
 # 	RUN_DATA_PATH="$BASE_DATA_PATH$MEMG_PATH$bm"
 
 # 	export dt=`date +"%Y-%m-%d-%H-%M-%S"`
-	
+
 # 	export INTERVAL_MSEC=1000
 
 
-# 	execute_config "Creating $RUN_DATA_PATH" "mkdir -p $RUN_DATA_PATH ; sudo chmod 777 $RUN_DATA_PATH" 
+# 	execute_config "Creating $RUN_DATA_PATH" "mkdir -p $RUN_DATA_PATH ; sudo chmod 777 $RUN_DATA_PATH"
 
-# 	# monitor the LLC cache misses 
+# 	# monitor the LLC cache misses
 # 	export PERF_CSV_FILEPATH="$BASE_DATA_PATH$MEMG_PATH$bm/$bm-llc-$dry_run-miss-$dt.csv"
 # 	echo "PERF Into $PERF_CSV_FILEPATH"
 # 	perf stat -x , -e  LLC-load-misses,LLC-store-misses -C $CPU_CORE_ID  -I $INTERVAL_MSEC -o $PERF_CSV_FILEPATH &
@@ -189,19 +189,19 @@ function cleanup() {
 # 	# Run specific task inside the shield, option paramters are passed to COMMAND not to cset
 # 	# cset shield -e  COMMAND --  option1 option2 option-n
 # 	# runcpu options
-# 	# --nobuild does not build the banchmark , previously built 
-# 	# --copies=1 only one instance of the benchmark 
-# 	# --noreportable  = no PDF report 
-# 	# --iterations= no. of iteration 
-# 	# --tune=base - only base test  
-# 	# --output_format=none  - disable reports in deafult formats 
-# 	# --fakereport  , runs only the per script without the benchmark 
-	
+# 	# --nobuild does not build the banchmark , previously built
+# 	# --copies=1 only one instance of the benchmark
+# 	# --noreportable  = no PDF report
+# 	# --iterations= no. of iteration
+# 	# --tune=base - only base test
+# 	# --output_format=none  - disable reports in deafult formats
+# 	# --fakereport  , runs only the per script without the benchmark
 
-	
-# # Schedule an benchmark in isolation on core 5 and retriev the IPC using perf 
+
+
+# # Schedule an benchmark in isolation on core 5 and retriev the IPC using perf
 #  #cset shield -e perf -- stat -e instructions,cycles runcpu  --config=15March2024.cfg --size=test --nobuild --copies=1  --noreportable --iterations=3 --tune=base --output_format=none 500.perlbench_r
- 
+
 # 	cleanup
 
 # 	preprocess_separate_load_store_misses "$PERF_CSV_FILEPATH"
@@ -214,8 +214,8 @@ function cleanup() {
 
 
 ######## Step 1 : Ensure the setup is ready #############
-                                                                                                                                                                                                                                                                                                                  
-#sudo bash -c isol_setup.sh 
+
+#sudo bash -c isol_setup.sh
 
 ########Step 2: ###########################################
 function run_benchmark() {
@@ -231,16 +231,16 @@ function run_benchmark() {
 	RUN_EXE_PATH="$SPEC/benchspec/CPU/$BENCHMARK_NAME/run/run_base_test_all-suites-execution-times-m64.0000/"
 	echo "RUNEXE_PATH = $RUN_EXE_PATH"
 
-	execute_config "Creating $RUN_DATA_PATH" "mkdir -p $RUN_DATA_PATH ; sudo chmod 777 $RUN_DATA_PATH" 
+	execute_config "Creating $RUN_DATA_PATH" "mkdir -p $RUN_DATA_PATH ; sudo chmod 777 $RUN_DATA_PATH"
 
-	# monitor the LLC cache misses 
+	# monitor the LLC cache misses
 	export PERF_LLC_FILEPATH="$RUN_DATA_PATH/$BENCHMARK_NAME-llc$dry_run-$dt.csv"
-	
+
 	perf stat -x, -e  LLC-load-misses,LLC-store-misses,uncore_imc/data_reads/,uncore_imc/data_writes/ -C $CPU_CORE_FOREGROUND -I $INTERVAL_MSEC -o $PERF_LLC_FILEPATH &
 	export PERF_LLC_PID=$!
 	echo "PERF Recording LLC Misses $PERF_LLC_FILEPATH PID ($PERF_LLC_PID) on Core ($CPU_CORE_FOREGROUND)"
     	sleep 1
-	
+
 	#sudo bash -c "cd $SPEC; source shrc; cd -; \
 	cset proc -s C1  -e  specinvoke -- -i $ITERATIONS  -d $RUN_EXE_PATH &
 	export BENCHMARK_PID=$!
@@ -248,13 +248,13 @@ function run_benchmark() {
 
 	export PERF_IPC_FILEPATH="$RUN_DATA_PATH/$BENCHMARK_NAME-IPC$dry_run-$dt.txt"
 	echo "PERF Recording IPC in  $PERF_IPC_FILEPATH"
-	perf stat -e  instructions,cycles -o $PERF_IPC_FILEPATH  -p $BENCHMARK_PID 
-	
+	perf stat -e  instructions,cycles -o $PERF_IPC_FILEPATH  -p $BENCHMARK_PID
+
 	# cleanup
 	sleep 1
 	echo "Stopping Perf($PERF_LLC_PID)"
 	kill -9 $PERF_LLC_PID
- 
+
 	preprocess_separate_load_store_misses "$PERF_LLC_FILEPATH"
 
 }

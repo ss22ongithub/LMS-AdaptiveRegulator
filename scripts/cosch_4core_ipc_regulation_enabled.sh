@@ -3,19 +3,22 @@
 
 #if SPEC Installation exist
 export SPEC=$SPEC
-export CPU_CORE_FOREGROUND=1
-export CPU_CORE_BACKGROUND=3
+export CPU_CORE_C1=1
+export CPU_CORE_C2=2
+export CPU_CORE_C3=3
+export CPU_CORE_C4=4
 
-export CPUSET_FORE_NAME="C1"
-export CPUSET_BACK_NAME="C3"
 
+export CPUSET_C1="C1"
+export CPUSET_C2="C2"
+export CPUSET_C3="C3"
+export CPUSET_C4="C4"
 
 export BASE_DATA_PATH=/home/ss22/Workspace/data/
-export MEMG_PATH=without_regulation/ # default path
-
+#export MEMG_PATH=without_regulation/  #default pat
 
 export benchmarks_single=(
-"619.lbm_s"
+"503.bwaves_r"
 )
 
 export benchmarks_all=(
@@ -187,7 +190,7 @@ function run_benchmark() {
 	export rundt=$2
 	local CPUSET_NAME=$3
 	export COS=$4
-	export PERF_TIMEOUT=10000
+	export PERF_TIMEOUT=20000
 
 	local CPU_CORE=$CPU_CORE_FOREGROUND
 	if [[ $CPUSET_NAME == $CPUSET_BACK_NAME ]] ; then
@@ -195,7 +198,7 @@ function run_benchmark() {
 	fi
 
 
-	export ITERATIONS=3
+	export ITERATIONS=10000
 
 	export dt=`date +"%Y-%m-%d-%H-%M-%S"`
 
@@ -225,11 +228,18 @@ function run_benchmark() {
 
 	# preprocess_separate_load_store_misses "$PERF_LLC_FILEPATH"
 
+	IPC_VALUE=$(grep "insn per cycle" $PERF_IPC_FILEPATH | awk '{print $4}')
+	echo "$BENCHMARK_NAME = $IPC_VALUE IPC"
+
 }
+
 
 ################## Initialization function ##############################
 function init(){
 	execute_config "Switch off kernel buffer tracing! " "echo 0 >  /sys/kernel/tracing/tracing_on"
+
+	execute_config "Setting CPU frequency governor = performance" "cpupower frequency-set -g performance"
+	execute_config "Disable NMI watchdog" "echo 0 > /proc/sys/kernel/nmi_watchdog"
 
 	if [ -d /sys/module/areg ]; then
 	    export MEMG_PATH=with_ar/
@@ -238,20 +248,13 @@ function init(){
 	else
 		 export MEMG_PATH=without_regulation/
 	fi
-	echo "$MEMG_PATH"
 
 }
 
 #####################################################################################r###################
 rundt=`date +"%Y-%m-%d-%H-%M-%S"`
-BACKGROUND_TASK="519.lbm_r"
 
-#FOREGROUND_TASK="500.perlbench_r"
-#run_benchmark $BACKGROUND_TASK $rundt $CPUSET_BACK_NAME "COSCHED" &
-#pid_back=$!
-#run_benchmark $FOREGROUND_TASK $rundt $CPUSET_FORE_NAME "COSCHED"
-#wait $pid_back
-#sleep 60
+
 
 ###### Run Initializations #################
 
@@ -259,17 +262,45 @@ init
 
 #############################################  MAIN #########################################r###################
 
-for benchmark in "${benchmarks_single[@]}";
-do
-	echo "====================================================$benchmark START============================================"
- 	FOREGROUND_TASK=$benchmark
- 	run_benchmark $BACKGROUND_TASK $rundt $CPUSET_BACK_NAME "COSCHED-$FOREGROUND_TASK"&
-	pid_back=$!
-	run_benchmark $FOREGROUND_TASK $rundt $CPUSET_FORE_NAME "COSCHED"
+echo "====================================================$benchmark START============================================"
+#TASK_T1="519.lbm_r"
+#TASK_T2="619.lbm_s"
+#TASK_T3="621.wrf_s"
+#TASK_T4="521.wrf_r"
 
-	wait $pid_back
-	sleep 30
-	echo "====================================================$benchmark ENDS ============================================"
-done
+#TASK_T1="519.lbm_r"
+#TASK_T2="510.parest_r"
+#TASK_T3="538.imagick_r"
+#TASK_T4="544.nab_r"
+
+#TASK_T1="541.leela_r"
+#TASK_T2="600.perlbench_s"
+#TASK_T3="511.povray_r"
+#TASK_T4="544.nab_r"
+
+TASK_T1="541.leela_r"
+TASK_T2="603.bwaves_s"
+TASK_T3="620.omnetpp_s"
+TASK_T4="544.nab_r"
+
+run_benchmark $TASK_T1 $rundt $CPUSET_C1 "-4CORE-COSCHED-$TASK_T1"&
+pid_1=$!
+run_benchmark $TASK_T2 $rundt $CPUSET_C2 "-4CORE-COSCHED-$TASK_T2"&
+pid_2=$!
+run_benchmark $TASK_T3 $rundt $CPUSET_C3 "-4CORE-COSCHED-$TASK_T3"&
+pid_3=$!
+run_benchmark $TASK_T4 $rundt $CPUSET_C4 "-4CORE-COSCHED-$TASK_T4"&
+pid_4=$!
+
+wait $pid_1
+wait $pid_2
+wait $pid_3
+wait $pid_4
+sleep 30
+echo "====================================================$benchmark ENDS ============================================"
 
 ##############################################################################################
+
+
+execute_config "Enable NMI watchdog" "echo 1 > /proc/sys/kernel/nmi_watchdog"
+
